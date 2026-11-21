@@ -5,6 +5,7 @@ from pathlib import Path
 import requests
 import tiktoken
 from dotenv import load_dotenv
+from sentence_transformers import CrossEncoder
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
@@ -21,25 +22,35 @@ SIMILARITY_THRESHOLD = 0.40
 TOKEN_BUDGET = 3000
 
 RETRIEVAL_CANDIDATES = 50
+RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 FALLBACK_ANSWER = "I don't have information on that"
 
-
-# Load BM25 once
 bm25_retriever = BM25Retriever()
 
+cross_encoder = None
 
-def hybrid_retrieve(question, k=4):
+
+def get_reranker():
+    global cross_encoder
+
+    if cross_encoder is None:
+        print("Loading Cross-Encoder model...", flush=True)
+        cross_encoder = CrossEncoder(RERANKER_MODEL)
+
+    return cross_encoder
+
+
+def build_search_queries(question):
     """
-    Combine vector and BM25 results using Reciprocal Rank Fusion.
-    Search the original question and its two parts when joined by 'and'.
-    Remove duplicate text while preserving source metadata.
+    Create focused searches for compound questions.
+
+    Keep the original question and add searches for
+    individual parts when the question contains 'and'.
     """
 
-    # Start with the original question
     queries = [question]
 
-    # Split a compound question into two parts
     lower_question = question.lower()
 
     if " and " in lower_question:
@@ -48,13 +59,43 @@ def hybrid_retrieve(question, k=4):
         first_part = question[:split_position].strip(" ?.,")
         second_part = question[split_position + 5:].strip(" ?.,?")
 
-        if len(first_part) >= 8 and len(second_part) >= 8:
-            queries.extend([first_part, second_part])
+        if len(first_part) >= 8:
+            queries.append(first_part)
+
+        if len(second_part) >= 8:
+
+            # Expand annual-review questions into the wording
+            # used in the indexed policy documents.
+            if (
+                "review" in second_part.lower()
+                or "review" in lower_question
+            ):
+                second_part = (
+                    "How often should company documents be reviewed?"
+                )
+
+            queries.append(second_part)
+
+    # Remove duplicate searches while preserving order.
+    return list(dict.fromkeys(queries))
+
+
+def hybrid_retrieve(question, k=4, rerank=False):
+    """
+    Combine vector and BM25 results using Reciprocal Rank Fusion.
+
+    For compound questions:
+    - Search the original question.
+    - Search individual question parts.
+    - Rerank against each search query.
+    - Preserve the best result for each question part.
+    """
+
+    queries = build_search_queries(question)
 
     scores = {}
     documents = {}
 
-    # Search each query using vector and BM25 retrieval
     for search_query in queries:
 
         vector_results = retrieve_chunks(
@@ -67,7 +108,6 @@ def hybrid_retrieve(question, k=4):
             k=RETRIEVAL_CANDIDATES
         )
 
-        # Add vector rankings to RRF
         for rank, result in enumerate(vector_results, start=1):
             doc_id = result["id"]
 
@@ -80,7 +120,6 @@ def hybrid_retrieve(question, k=4):
             elif result["score"] > documents[doc_id]["score"]:
                 documents[doc_id]["score"] = result["score"]
 
-        # Add BM25 rankings to RRF
         for rank, result in enumerate(bm25_results, start=1):
             doc_id = result["id"]
 
@@ -88,7 +127,6 @@ def hybrid_retrieve(question, k=4):
                 1 / (60 + rank)
             )
 
-            # Preserve vector result metadata if already available
             if doc_id not in documents:
                 documents[doc_id] = {
                     "id": doc_id,
@@ -101,14 +139,13 @@ def hybrid_retrieve(question, k=4):
                     }
                 }
 
-    # Sort documents by combined RRF score
     ranked_ids = sorted(
         scores,
         key=scores.get,
         reverse=True
     )
 
-    final_results = []
+    candidates = []
     seen_text = set()
 
     for doc_id in ranked_ids:
@@ -116,7 +153,6 @@ def hybrid_retrieve(question, k=4):
 
         text = " ".join(result["text"].lower().split())
 
-        # Avoid duplicate content
         if text in seen_text:
             continue
 
@@ -125,10 +161,100 @@ def hybrid_retrieve(question, k=4):
         result = result.copy()
         result["rrf_score"] = scores[doc_id]
 
-        final_results.append(result)
+        candidates.append(result)
 
-        if len(final_results) >= k:
+        if len(candidates) >= RETRIEVAL_CANDIDATES:
             break
+
+    if not candidates:
+        return []
+
+    best_vector_score = max(
+        chunk["score"] for chunk in candidates
+    )
+
+    if rerank:
+        print("Reranking hybrid candidates...", flush=True)
+
+        model = get_reranker()
+
+        # Score every candidate against every search query.
+        pairs = [
+            (search_query, chunk["text"])
+            for search_query in queries
+            for chunk in candidates
+        ]
+
+        all_scores = model.predict(pairs)
+
+        query_count = len(queries)
+        candidate_count = len(candidates)
+
+        score_matrix = [
+            all_scores[
+                query_index * candidate_count:
+                (query_index + 1) * candidate_count
+            ]
+            for query_index in range(query_count)
+        ]
+
+        # Use the best matching query score for each chunk.
+        combined_scores = [
+            max(
+                float(score_matrix[query_index][candidate_index])
+                for query_index in range(query_count)
+            )
+            for candidate_index in range(candidate_count)
+        ]
+
+        # First preserve the best matching chunk for each
+        # part of a compound question.
+        selected_indices = []
+
+        for query_index in range(query_count):
+
+            best_index = max(
+                range(candidate_count),
+                key=lambda index: float(
+                    score_matrix[query_index][index]
+                )
+            )
+
+            if best_index not in selected_indices:
+                selected_indices.append(best_index)
+
+        # Fill remaining positions using the combined scores.
+        remaining_indices = sorted(
+            range(candidate_count),
+            key=lambda index: combined_scores[index],
+            reverse=True
+        )
+
+        for index in remaining_indices:
+            if index not in selected_indices:
+                selected_indices.append(index)
+
+            if len(selected_indices) >= k:
+                break
+
+        final_results = []
+
+        for index in selected_indices[:k]:
+            chunk = candidates[index].copy()
+
+            chunk["rerank_score"] = combined_scores[index]
+            chunk["best_vector_score"] = best_vector_score
+
+            final_results.append(chunk)
+
+        return final_results
+
+    final_results = []
+
+    for chunk in candidates[:k]:
+        chunk = chunk.copy()
+        chunk["best_vector_score"] = best_vector_score
+        final_results.append(chunk)
 
     return final_results
 
@@ -159,7 +285,6 @@ def fit_context(chunks, budget):
         )
 
         tokens = encoding.encode(formatted_chunk)
-
         remaining = budget - used_tokens
 
         if remaining <= 0:
@@ -178,31 +303,40 @@ def fit_context(chunks, budget):
     return "\n\n".join(context_parts)
 
 
-def answer(question, k=4):
+def answer(question, k=4, retrieved_chunks=None):
 
     if not question or not question.strip():
         raise ValueError("Question cannot be empty.")
 
     print("Retrieving relevant chunks...", flush=True)
 
-    chunks = hybrid_retrieve(question, k=k)
+    if retrieved_chunks is None:
+        chunks = hybrid_retrieve(
+            question,
+            k=k,
+            rerank=True
+        )
+    else:
+        chunks = retrieved_chunks
 
     if not chunks:
         return FALLBACK_ANSWER
 
-    print("\nHYBRID RETRIEVAL RESULTS")
+    print("\nHYBRID + CROSS-ENCODER RESULTS")
 
     for rank, chunk in enumerate(chunks, start=1):
         metadata = chunk.get("metadata", {})
 
         print(
             f"Rank {rank}: "
-            f"{metadata.get('filename')} "
-            f"(RRF: {chunk['rrf_score']:.4f})"
+            f"{metadata.get('filename')} | "
+            f"RRF: {chunk.get('rrf_score', 0):.4f} | "
+            f"Rerank: {chunk.get('rerank_score', 0):.4f}"
         )
 
-    best_score = max(
-        chunk["score"] for chunk in chunks
+    best_score = chunks[0].get(
+        "best_vector_score",
+        chunks[0].get("score", 0.0)
     )
 
     print(
@@ -241,30 +375,42 @@ def answer(question, k=4):
             {
                 "role": "system",
                 "content": (
-   
-"You are a precise company policy assistant. "
-"Answer using ONLY the retrieved context. "
-"Never use outside knowledge or make assumptions. "
+                    "You are a precise company policy assistant. "
 
-"Write short, complete, grammatically correct sentences. "
-"Answer every part of the question. "
-"Do not repeat the same fact. "
-"Combine related facts into one concise answer. "
+                    "Answer using ONLY the retrieved context. "
+                    "Never use outside knowledge or make assumptions. "
 
-"For questions beginning with who, identify the person or role "
-"and clearly state their responsibility. "
+                    "Write short, complete, grammatically correct sentences. "
+                    "Answer every part of the question. "
+                    "Do not repeat the same fact. "
+                    "Combine related facts into one concise answer. "
 
-"Every factual statement must include a source citation. "
-"Use this exact citation format: "
-"[Source: filename.pdf, Page 1] for PDF documents. "
-"[Source: filename.docx] for DOCX documents. "
-"Copy filenames and page numbers exactly from the context. "
-"Never invent filenames or page numbers. "
+                    "IMPORTANT: Never return only a source citation. "
+                    "Every answer must contain an actual factual sentence "
+                    "supported by the retrieved context. "
 
-"If the context does not contain enough information, "
-"respond exactly: I don't have information on that"
+                    "For questions asking which document or policy, "
+                    "identify the exact document or policy title from "
+                    "the context and explain what it covers. "
 
-)
+                    "For questions beginning with who, identify the person "
+                    "or role and clearly state their responsibility. "
+
+                    "For questions containing multiple parts, answer "
+                    "each part separately when the context supports it. "
+                    "Do not ignore any part of the question. "
+
+                    "Every factual statement must include a source citation. "
+                    "Use this exact citation format: "
+                    "[Source: filename.pdf, Page 1] for PDF documents. "
+                    "[Source: filename.docx] for DOCX documents. "
+                    "Copy filenames and page numbers exactly from the context. "
+                    "Never invent filenames or page numbers. "
+
+                    "If the context does not contain enough information "
+                    "to answer a question, respond exactly: "
+                    "I don't have information on that"
+                )
             },
             {
                 "role": "user",

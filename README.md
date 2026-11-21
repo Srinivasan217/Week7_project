@@ -57,3 +57,16 @@ The evaluation showed improvements across all four RAGAS metrics:
 The improvement helped retrieve more complete and relevant policy information. However, faithfulness remains below the target of 0.85. Further improvements to retrieval thresholds, answer generation, and evaluation reliability are recommended.
 
 The system also maintains fallback responses for questions that cannot be answered using the available company documents.
+# Business Summary – Week 7 RAG Assessment
+
+The Week 7 assessment developed and evaluated a Retrieval-Augmented Generation (RAG) system for answering questions from company policy documents.
+
+The system supports document ingestion, text chunking, embedding generation, vector storage, semantic retrieval, BM25 keyword retrieval, hybrid retrieval, and cross-encoder reranking. It also includes source citations, hallucination controls, context-budget handling, and a protected FastAPI endpoint.
+
+A golden evaluation dataset containing 15 questions was created, consisting of 8 simple questions, 4 multi-document or multi-part questions, and 3 unanswerable questions.
+
+RAGAS evaluation showed improvements across all four metrics when comparing answerable questions. Faithfulness improved from 0.90 to 1.00, answer relevancy from 0.7361 to 0.8542, context precision from 0.8379 to 0.9583, and context recall from 0.9167 to 1.00. The faithfulness scores were calculated from 10 valid evaluations in each run because two evaluations returned errors.
+
+The system also achieved 100% abstention accuracy on the three unanswerable questions, demonstrating that it can avoid answering questions when the required information is unavailable.
+
+Overall, the assessment demonstrates a functional RAG pipeline with improved retrieval quality, grounded answers, source citations, and evaluation capabilities. The results indicate that the system is suitable as a foundation for an internal company-policy question-answering application.
