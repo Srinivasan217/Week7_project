@@ -1,0 +1,15 @@
+{"question":"Who is responsible for communicating company guidelines?","ground_truth":"Managers are responsible for communicating company guidelines.","source":"finance_01.pdf","page":1}
+{"question":"Who should employees contact for clarification?","ground_truth":"Employees should contact their department manager for clarification.","source":"finance_01.pdf","page":1}
+{"question":"Who approves exceptions to company policies?","ground_truth":"Exceptions require approval from the authorized manager.","source":"hr_01.pdf","page":1}
+{"question":"How often should company documents be reviewed?","ground_truth":"Company documents should be reviewed annually.","source":"it_01.pdf","page":1}
+{"question":"What procedures must employees follow?","ground_truth":"Employees must follow approved company procedures.","source":"operations_01.pdf","page":1}
+{"question":"What is the purpose of the payroll processing policy?","ground_truth":"It describes the company's payroll processing policy.","source":"finance_01.pdf","page":1}
+{"question":"Which document explains annual leave?","ground_truth":"The Annual Leave Policy explains the company's annual leave rules.","source":"hr_02.docx","page":1}
+{"question":"Which policy covers password security?","ground_truth":"The Password Security Policy covers password security.","source":"it_02.docx","page":1}
+{"question":"Who communicates guidelines, who clarifies questions, and who approves exceptions?","ground_truth":"Managers communicate guidelines, employees contact their department manager for clarification, and authorized managers approve exceptions.","source":"finance_01.pdf","page":1}
+{"question":"What are the employee responsibilities for following procedures and requesting clarification?","ground_truth":"Employees must follow approved company procedures and contact their department manager for clarification.","source":"hr_01.pdf","page":1}
+{"question":"What do the policy documents say about communicating guidelines and reviewing policies?","ground_truth":"Managers communicate guidelines, and documents should be reviewed annually.","source":"it_01.pdf","page":1}
+{"question":"What is the relationship between policy exceptions and manager approval?","ground_truth":"Policy exceptions require approval from an authorized manager.","source":"operations_01.pdf","page":1}
+{"question":"What is the CEO's full name?","ground_truth":"I don't have information on that.","source":"","page":null}
+{"question":"What is the company's registered street address?","ground_truth":"I don't have information on that.","source":"","page":null}
+{"question":"How do I bake a chocolate cake?","ground_truth":"I don't have information on that.","source":"","page":null}
