@@ -23,7 +23,22 @@ required top 50.
 ## Task 3 – Citations and Hallucination Control
 
 ## Task 4 – Golden Dataset and RAGAS Evaluation
+# Week 7 – RAG Assessment: Business Summary
 
+The RAG-based company policy assistant was developed to help employees retrieve accurate information from internal company documents. The system supports PDF and DOCX documents, document chunking, embedding generation, Qdrant vector storage, and hybrid retrieval using vector search and BM25 with Reciprocal Rank Fusion.
+
+Advanced retrieval features include cross-encoder reranking, query rewriting, and metadata filtering. The answer generation module uses an NVIDIA-hosted language model and is instructed to answer only from retrieved document context. Source citations are included in generated answers, and unsupported questions receive a predefined fallback response.
+
+A golden evaluation dataset containing 15 questions was created, including simple questions, multi-part questions, and unanswerable questions. RAGAS evaluation produced the following results:
+
+- Faithfulness: 0.6154
+- Answer Relevancy: 0.5889
+- Context Precision: 0.6704
+- Context Recall: 0.7333
+
+The evaluation identified opportunities to improve answer relevance, retrieval quality, and automated evaluation reliability. Manual inspection confirmed that several answers were correctly supported by retrieved documents, while unsupported questions were correctly handled through abstention. Some RAGAS judge evaluations returned incomplete outputs.
+
+Overall, the project demonstrates a functional document-grounded question-answering system with hybrid retrieval, citations, and hallucination-control mechanisms. Further improvements are recommended before deploying the system in a production environment.
 ## Business Summary### Business Summary – RAG Pipeline Improvement
 
 The RAG-based company policy assistant was evaluated using a golden dataset of 15 questions, including simple questions, multi-part questions, and unanswerable questions.

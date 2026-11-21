@@ -32,52 +32,76 @@ bm25_retriever = BM25Retriever()
 def hybrid_retrieve(question, k=4):
     """
     Combine vector and BM25 results using Reciprocal Rank Fusion.
+    Search the original question and its two parts when joined by 'and'.
     Remove duplicate text while preserving source metadata.
     """
 
-    vector_results = retrieve_chunks(
-        question,
-        k=RETRIEVAL_CANDIDATES
-    )
+    # Start with the original question
+    queries = [question]
 
-    bm25_results = bm25_retriever.retrieve(
-        question,
-        k=RETRIEVAL_CANDIDATES
-    )
+    # Split a compound question into two parts
+    lower_question = question.lower()
+
+    if " and " in lower_question:
+        split_position = lower_question.find(" and ")
+
+        first_part = question[:split_position].strip(" ?.,")
+        second_part = question[split_position + 5:].strip(" ?.,?")
+
+        if len(first_part) >= 8 and len(second_part) >= 8:
+            queries.extend([first_part, second_part])
 
     scores = {}
     documents = {}
 
-    # Vector ranking
-    for rank, result in enumerate(vector_results, start=1):
-        doc_id = result["id"]
+    # Search each query using vector and BM25 retrieval
+    for search_query in queries:
 
-        scores[doc_id] = scores.get(doc_id, 0) + (
-            1 / (60 + rank)
+        vector_results = retrieve_chunks(
+            search_query,
+            k=RETRIEVAL_CANDIDATES
         )
 
-        documents[doc_id] = result
-
-    # BM25 ranking
-    for rank, result in enumerate(bm25_results, start=1):
-        doc_id = result["id"]
-
-        scores[doc_id] = scores.get(doc_id, 0) + (
-            1 / (60 + rank)
+        bm25_results = bm25_retriever.retrieve(
+            search_query,
+            k=RETRIEVAL_CANDIDATES
         )
 
-        # Normalize BM25 result structure
-        documents[doc_id] = {
-            "id": doc_id,
-            "text": result["text"],
-            "score": 0.0,
-            "metadata": {
-                "filename": result["filename"],
-                "department": result["department"],
-                "page": result["page"]
-            }
-        }
+        # Add vector rankings to RRF
+        for rank, result in enumerate(vector_results, start=1):
+            doc_id = result["id"]
 
+            scores[doc_id] = scores.get(doc_id, 0) + (
+                1 / (60 + rank)
+            )
+
+            if doc_id not in documents:
+                documents[doc_id] = result.copy()
+            elif result["score"] > documents[doc_id]["score"]:
+                documents[doc_id]["score"] = result["score"]
+
+        # Add BM25 rankings to RRF
+        for rank, result in enumerate(bm25_results, start=1):
+            doc_id = result["id"]
+
+            scores[doc_id] = scores.get(doc_id, 0) + (
+                1 / (60 + rank)
+            )
+
+            # Preserve vector result metadata if already available
+            if doc_id not in documents:
+                documents[doc_id] = {
+                    "id": doc_id,
+                    "text": result["text"],
+                    "score": 0.0,
+                    "metadata": {
+                        "filename": result["filename"],
+                        "department": result["department"],
+                        "page": result["page"]
+                    }
+                }
+
+    # Sort documents by combined RRF score
     ranked_ids = sorted(
         scores,
         key=scores.get,
@@ -92,7 +116,7 @@ def hybrid_retrieve(question, k=4):
 
         text = " ".join(result["text"].lower().split())
 
-        # Avoid identical content from different documents
+        # Avoid duplicate content
         if text in seen_text:
             continue
 
@@ -217,28 +241,29 @@ def answer(question, k=4):
             {
                 "role": "system",
                 "content": (
-    "You are a precise company policy assistant. "
-    "Answer using ONLY the retrieved context. "
-    "Do not use outside knowledge or make assumptions. "
+   
+"You are a precise company policy assistant. "
+"Answer using ONLY the retrieved context. "
+"Never use outside knowledge or make assumptions. "
 
-    "Always answer in complete, grammatically correct sentences. "
-    "Never return only a person, role, noun phrase, or sentence fragment. "
-    "For questions beginning with who, identify the person or role "
-    "and clearly state their responsibility. "
-    "For example, answer 'Who approves exceptions?' with "
-    "'Exceptions require approval from the authorized manager.' "
+"Write short, complete, grammatically correct sentences. "
+"Answer every part of the question. "
+"Do not repeat the same fact. "
+"Combine related facts into one concise answer. "
 
-    "Give a short, direct answer addressing exactly what was asked. "
-    "Do not combine unrelated policies or introduce unsupported details. "
+"For questions beginning with who, identify the person or role "
+"and clearly state their responsibility. "
 
-    "Every factual statement must include a citation. "
-    "Copy citations exactly as they appear in the retrieved context. "
-    "Never invent filenames or page numbers. "
-    "Preserve page numbers when provided. "
-    "If no page number is provided, cite only the filename. "
+"Every factual statement must include a source citation. "
+"Use this exact citation format: "
+"[Source: filename.pdf, Page 1] for PDF documents. "
+"[Source: filename.docx] for DOCX documents. "
+"Copy filenames and page numbers exactly from the context. "
+"Never invent filenames or page numbers. "
 
-    "If the context does not contain enough information, "
-    "respond exactly: I don't have information on that"
+"If the context does not contain enough information, "
+"respond exactly: I don't have information on that"
+
 )
             },
             {
